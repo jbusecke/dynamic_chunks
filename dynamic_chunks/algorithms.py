@@ -8,6 +8,9 @@ import numpy as np
 import xarray as xr
 from dask.utils import parse_bytes
 
+class NoMatchingChunks(Exception):
+    pass
+
 logger = logging.getLogger(__name__)
 
 def check_inputs(func):
@@ -177,7 +180,7 @@ def even_divisor_algo(
 
     # If there are no matches in the range, the user has to increase the tolerance for this to work.
     if len(combinations_filtered) == 0:
-        raise ValueError(
+        raise NoMatchingChunks(
             (
                 "Could not find any chunk combinations satisfying "
                 "the size constraint. Consider increasing tolerance"
@@ -352,7 +355,7 @@ def iterative_ratio_increase_algo(
     upper_bound = target_chunk_size * (1 + size_tolerance)
     logger.info(f"{optimal_size=} {lower_bound=} {upper_bound=}")
     if not (optimal_size >= lower_bound and optimal_size <= upper_bound):
-        raise ValueError(
+        raise NoMatchingChunks(
             (
                 "Could not find any chunk combinations satisfying "
                 "the size constraint. Consider increasing tolerance"
