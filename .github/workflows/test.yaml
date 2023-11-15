@@ -43,7 +43,7 @@ jobs:
       - name: 🏄‍♂️ Run Tests
         shell: bash -l {0}
         run: |
-          pytest -v --cov .
+          pytest dynamic_chunks/tests -v --cov=./ --cov-report=xml
       - name: 🚦 Run Codecov
         if: |
           github.event_name == 'push' ||
