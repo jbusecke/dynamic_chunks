@@ -7,8 +7,6 @@ import numpy as np
 import xarray as xr
 from dask.utils import parse_bytes
 
-from pangeo_forge_recipes.aggregation import XarraySchema, schema_to_template_ds
-
 logger = logging.getLogger(__name__)
 
 
@@ -227,8 +225,8 @@ def iterative_ratio_increase_algo(
     return optimal_target_chunks
 
 
-def dynamic_target_chunks_from_schema(
-    schema: XarraySchema,
+def dynamic_target_chunks_from_dataset(
+    ds: xr.Dataset,
     target_chunk_size: Union[int, str],
     target_chunks_aspect_ratio: Dict[str, int],
     size_tolerance: float,
@@ -244,8 +242,8 @@ def dynamic_target_chunks_from_schema(
 
     Parameters
     ----------
-    schema : XarraySchema
-        Schema of the input dataset
+    ds : xr.Dataset
+        Input dataset
     target_chunk_size : Union[int, str]
         Desired single chunks size. Can be provided as
         integer (bytes) or as a str like '100MB' etc.
@@ -278,8 +276,6 @@ def dynamic_target_chunks_from_schema(
 
     """
     target_chunk_size = _maybe_parse_bytes(target_chunk_size)
-
-    ds = schema_to_template_ds(schema)
 
     missing_dims = set(ds.dims) - set(target_chunks_aspect_ratio.keys())
     extra_dims = set(target_chunks_aspect_ratio.keys()) - set(ds.dims)
