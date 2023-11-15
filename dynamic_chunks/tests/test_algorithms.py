@@ -6,7 +6,6 @@ import xarray as xr
 
 
 from dynamic_chunks.algorithms import (
-    dynamic_target_chunks_from_dataset,
     even_divisor_algo,
     iterative_ratio_increase_algo,
 )
