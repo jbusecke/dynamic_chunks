@@ -24,7 +24,7 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - name: 🔁 Setup Python
+      - name: 🔨 Setup Python
         id: setup-python
         uses: actions/setup-python@v4
         with:
@@ -40,7 +40,7 @@ jobs:
       - name: 🏄‍♂️ Run Tests
         shell: bash -l {0}
         run: |
-          pytest tests -v --cov .
+          pytest -v --cov .
       - name: 🚦 Run Codecov
         if: |
           github.event_name == 'push' ||
