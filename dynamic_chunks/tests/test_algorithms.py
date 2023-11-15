@@ -8,6 +8,7 @@ import xarray as xr
 from dynamic_chunks.algorithms import (
     even_divisor_algo,
     iterative_ratio_increase_algo,
+    NoMatchingChunks
 )
 
 
@@ -217,3 +218,19 @@ def test_algo_comparison():
         size_tolerance=size_tolerance,
     )
     assert chunks_a == chunks_b
+
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_algo_exception(algo):
+    """Test that each of the algos raises our custom exception when we give some totally unsolvable parameters"""
+    with pytest.raises(NoMatchingChunks):
+        ds = _create_ds({"x": 10, "y": 10, "z": 10})
+        target_chunk_size = 4e10
+        target_chunks_aspect_ratio = {"x": -1, "y": 2, "z": 10}
+        size_tolerance = 0.01
+        chunks_a = algo(
+            ds,
+            target_chunk_size,
+            target_chunks_aspect_ratio=target_chunks_aspect_ratio,
+            size_tolerance=size_tolerance,
+        )
+        
