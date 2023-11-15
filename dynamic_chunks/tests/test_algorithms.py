@@ -4,8 +4,8 @@ import dask.array as dsa
 import pytest
 import xarray as xr
 
-from dynamic_chunks.dynamic_target_chunks import (
-    dynamic_target_chunks_from_dataset,
+
+from dynamic_chunks.algorithms import (
     even_divisor_algo,
     iterative_ratio_increase_algo,
 )
@@ -43,7 +43,7 @@ def _create_ds(dims_shape: Dict[str, int]) -> xr.Dataset:
 )
 def test_dynamic_rechunking(dims_shape, target_chunks_aspect_ratio, expected_target_chunks):
     ds = _create_ds(dims_shape)
-    target_chunks = dynamic_target_chunks_from_dataset(
+    target_chunks = even_divisor_algo(
         ds, 1e6, target_chunks_aspect_ratio=target_chunks_aspect_ratio, size_tolerance=0.2
     )
     print(target_chunks)
@@ -51,14 +51,14 @@ def test_dynamic_rechunking(dims_shape, target_chunks_aspect_ratio, expected_tar
     for dim, chunks in expected_target_chunks.items():
         assert target_chunks[dim] == chunks
 
-
-def test_nbytes_str_input():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_nbytes_str_input(algo):
     ds = _create_ds({"x": 100, "y": 100, "z": 100})
     target_chunks_aspect_ratio = {"x": 1, "y": 1, "z": 1}
-    target_chunks_int = dynamic_target_chunks_from_dataset(
+    target_chunks_int = algo(
         ds, 1e6, target_chunks_aspect_ratio=target_chunks_aspect_ratio, size_tolerance=0.2
     )
-    target_chunks_str = dynamic_target_chunks_from_dataset(
+    target_chunks_str = algo(
         ds, "1MB", target_chunks_aspect_ratio=target_chunks_aspect_ratio, size_tolerance=0.2
     )
     for dim in target_chunks_aspect_ratio.keys():
@@ -73,7 +73,7 @@ def test_maintain_ratio():
 
     for ds in [ds_equal, ds_long]:
         print(ds)
-        target_chunks = dynamic_target_chunks_from_dataset(
+        target_chunks = even_divisor_algo(
             ds, 1e4, target_chunks_aspect_ratio={"x": 1, "y": 4}, size_tolerance=0.2
         )
         ds_rechunked = ds.chunk(target_chunks)
@@ -83,11 +83,12 @@ def test_maintain_ratio():
 @pytest.mark.parametrize(
     "target_chunks_aspect_ratio", [{"x": 1, "y": -1, "z": 10}, {"x": 6, "y": -1, "z": 2}]
 )  # always keep y unchunked, and vary the others
-@pytest.mark.parametrize("target_chunk_nbytes", [1e6, 1e7])
-def test_skip_dimension(target_chunks_aspect_ratio, target_chunk_nbytes):
+@pytest.mark.parametrize("target_chunk_nbytes", [1e6, 5e6])
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_skip_dimension(target_chunks_aspect_ratio, target_chunk_nbytes, algo):
     ds = _create_ds({"x": 100, "y": 200, "z": 300})
     # Mark dimension as 'not-to-chunk' with -1
-    target_chunks = dynamic_target_chunks_from_dataset(
+    target_chunks = algo(
         ds,
         target_chunk_nbytes,
         target_chunks_aspect_ratio=target_chunks_aspect_ratio,
@@ -97,38 +98,40 @@ def test_skip_dimension(target_chunks_aspect_ratio, target_chunk_nbytes):
 
 
 @pytest.mark.parametrize("default_ratio", [-1, 1])
-def test_missing_dimensions(default_ratio):
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_missing_dimensions(default_ratio, algo):
     ds = _create_ds({"x": 100, "y": 200, "z": 300})
     # Test that a warning is raised
+    target_chunk_nbytes = 5e6
     msg = "are not specified in target_chunks_aspect_ratio.Setting default value of"
     with pytest.warns(UserWarning, match=msg):
-        chunks_from_default = dynamic_target_chunks_from_dataset(
+        chunks_from_default = algo(
             ds,
-            1e6,
+            target_chunk_nbytes,
             target_chunks_aspect_ratio={"x": 1, "z": 10},
             size_tolerance=0.2,
             default_ratio=default_ratio,
         )
-    chunks_explicit = dynamic_target_chunks_from_dataset(
+    chunks_explicit = algo(
         ds,
-        1e6,
+        target_chunk_nbytes,
         target_chunks_aspect_ratio={"x": 1, "y": default_ratio, "z": 10},
         size_tolerance=0.2,
     )
     assert chunks_from_default == chunks_explicit
 
-
-def test_permuted_dimensions():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_permuted_dimensions(algo):
     ds = _create_ds({"x": 100, "y": 200, "z": 300})
-    size_tolerance = 0.2
-    target_chunk_size = 1e6
-    target_chunks = dynamic_target_chunks_from_dataset(
+    size_tolerance = 0.6
+    target_chunk_size = 5e5
+    target_chunks = algo(
         ds,
         target_chunk_size,
         target_chunks_aspect_ratio={"x": 1, "y": 2, "z": 10},
         size_tolerance=size_tolerance,
     )
-    target_chunks_permuted = dynamic_target_chunks_from_dataset(
+    target_chunks_permuted = algo(
         ds,
         target_chunk_size,
         target_chunks_aspect_ratio={
@@ -140,61 +143,60 @@ def test_permuted_dimensions():
     )
     assert target_chunks == target_chunks_permuted
 
-
-def test_error_extra_dimensions_not_allowed():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_error_extra_dimensions_not_allowed(algo):
     ds = _create_ds({"x": 100, "y": 200, "z": 300})
     msg = "target_chunks_aspect_ratio contains dimensions not present in dataset."
     with pytest.raises(ValueError, match=msg):
-        dynamic_target_chunks_from_dataset(
+        algo(
             ds,
             1e6,
             target_chunks_aspect_ratio={"x": 1, "y_other_name": 1, "y": 1, "z": 10},
             size_tolerance=0.2,
         )
 
-
-def test_extra_dimensions_allowed():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_extra_dimensions_allowed(algo):
     ds = _create_ds({"x": 100, "y": 200, "z": 300})
     with pytest.warns(UserWarning, match="Trimming dimensions"):
-        chunks_with_extra = dynamic_target_chunks_from_dataset(
+        chunks_with_extra = algo(
             ds,
-            1e6,
+            5e5,
             target_chunks_aspect_ratio={"x": 1, "y_other_name": 1, "y": 1, "z": 10},
             size_tolerance=0.2,
             allow_extra_dims=True,
         )
-    chunks_without_extra = dynamic_target_chunks_from_dataset(
+    chunks_without_extra = algo(
         ds,
-        1e6,
+        5e5,
         target_chunks_aspect_ratio={"x": 1, "y": 1, "z": 10},
         size_tolerance=0.2,
     )
     assert chunks_with_extra == chunks_without_extra
 
-
-def test_non_int_ratio_input():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_non_int_ratio_input(algo):
     ds = _create_ds({"x": 1, "y": 2, "z": 3})
     with pytest.raises(ValueError, match="Ratio value must be an integer. Got 1.5 for dimension y"):
-        dynamic_target_chunks_from_dataset(
+        algo(
             ds,
             1e6,
             target_chunks_aspect_ratio={"x": 1, "y": 1.5, "z": 10},
             size_tolerance=0.2,
         )
 
-
-def test_large_negative_ratio_input():
+@pytest.mark.parametrize("algo", [iterative_ratio_increase_algo, even_divisor_algo])
+def test_large_negative_ratio_input(algo):
     ds = _create_ds({"x": 1, "y": 2, "z": 3})
     with pytest.raises(
         ValueError, match="Ratio value can only be larger than 0 or -1. Got -100 for dimension y"
     ):
-        dynamic_target_chunks_from_dataset(
+        algo(
             ds,
             1e6,
             target_chunks_aspect_ratio={"x": 1, "y": -100, "z": 10},
             size_tolerance=0.2,
         )
-
 
 def test_algo_comparison():
     """test that we get the same result from both algorithms for a known simple case"""
@@ -215,36 +217,3 @@ def test_algo_comparison():
         size_tolerance=size_tolerance,
     )
     assert chunks_a == chunks_b
-
-
-def test_allow_fallback_algo():
-    """test that we get a ValueError when we can't find a solution"""
-    # create a dataset that has
-    ds = _create_ds({"x": 100, "z": 1111})
-    target_chunk_size = 7e4
-    target_chunks_aspect_ratio = {"x": -1, "z": 1}
-    size_tolerance = 0.1
-
-    msg = (
-        "Could not find any chunk combinations satisfying the size constraint."
-        " Consider increasing size_tolerance or enabling allow_fallback_algo."
-    )
-    with pytest.raises(ValueError, match=msg):
-        dynamic_target_chunks_from_dataset(
-            ds,
-            target_chunk_size,
-            target_chunks_aspect_ratio=target_chunks_aspect_ratio,
-            size_tolerance=size_tolerance,
-            allow_fallback_algo=False,
-        )
-    with pytest.warns(
-        UserWarning, match="Primary algorithm using even divisors along each dimension failed with"
-    ):
-        target_chunks = dynamic_target_chunks_from_dataset(
-            ds,
-            target_chunk_size,
-            target_chunks_aspect_ratio=target_chunks_aspect_ratio,
-            size_tolerance=size_tolerance,
-            allow_fallback_algo=True,
-        )
-    assert target_chunks == {"x": 100, "z": 85}

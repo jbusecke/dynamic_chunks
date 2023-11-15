@@ -1,6 +1,7 @@
 import itertools
 import logging
 import warnings
+import functools
 from typing import Dict, List, Union
 
 import numpy as np
@@ -8,6 +9,55 @@ import xarray as xr
 from dask.utils import parse_bytes
 
 logger = logging.getLogger(__name__)
+
+def check_inputs(func):
+    """Check and sanitize inputs to the dynamic chunking algorithms"""
+    @functools.wraps(func)
+    def wrapper_check_inputs(
+        ds: xr.Dataset,
+        target_chunk_size: Union[int, str],
+        target_chunks_aspect_ratio: Dict[str, int],
+        size_tolerance: float,
+        default_ratio: int = -1,
+        allow_extra_dims: bool = False):
+            
+        target_chunk_size = _maybe_parse_bytes(target_chunk_size)
+
+        missing_dims = set(ds.dims) - set(target_chunks_aspect_ratio.keys())
+        extra_dims = set(target_chunks_aspect_ratio.keys()) - set(ds.dims)
+
+        if not allow_extra_dims and len(extra_dims) > 0:
+            raise ValueError(
+                f"target_chunks_aspect_ratio contains dimensions not present in dataset. "
+                f"Got {list(extra_dims)} but expected {list(ds.dims.keys())}. You can pass "
+                "additional dimensions by setting allow_extra_dims=True"
+            )
+        elif allow_extra_dims and len(extra_dims) > 0:
+            # trim extra dimension out of target_chunks_aspect_ratio
+            warnings.warn(f"Trimming dimensions {list(extra_dims)} from target_chunks_aspect_ratio")
+            target_chunks_aspect_ratio = {
+                dim: v for dim, v in target_chunks_aspect_ratio.items() if dim in ds.dims
+            }
+
+        if len(missing_dims) > 0:
+            # set default ratio for missing dimensions
+            warnings.warn(
+                f"dimensions {list(missing_dims)} are not specified in target_chunks_aspect_ratio."
+                f"Setting default value of {default_ratio} for these dimensions."
+            )
+            target_chunks_aspect_ratio.update({dim: default_ratio for dim in missing_dims})
+
+        # check values in target_chunks_aspect_ratio
+        for dim, ratio in target_chunks_aspect_ratio.items():
+            if not (ratio >= 1 or ratio == -1):
+                raise ValueError(
+                    f"Ratio value can only be larger than 0 or -1. Got {ratio} for dimension {dim}"
+                )
+            if not isinstance(ratio, int):
+                raise ValueError(f"Ratio value must be an integer. Got {ratio} for dimension {dim}")
+
+        return func(ds, target_chunk_size, target_chunks_aspect_ratio, size_tolerance)
+    return wrapper_check_inputs
 
 
 def get_memory_size(ds: xr.Dataset, chunks: Dict[str, int]) -> int:
@@ -44,14 +94,52 @@ def _maybe_parse_bytes(target_chunk_size: Union[str, int]) -> int:
     else:
         return target_chunk_size
 
-
+@check_inputs
 def even_divisor_algo(
     ds: xr.Dataset,
     target_chunk_size: int,
     target_chunks_aspect_ratio: Dict[str, int],
     size_tolerance: float,
 ) -> Dict[str, int]:
-    logger.info("Running primary dynamic chunking algorithm using even divisors")
+    """
+    Algorithm that finds all possible chunk combinations with even divisors and chooses the best fit based on 
+    the desired chunk aspect ratio and chunk size.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Input dataset
+    target_chunk_size : Union[int, str]
+        Desired single chunks size. Can be provided as
+        integer (bytes) or as a str like '100MB' etc.
+    target_chunks_aspect_ratio: Dict[str, int]
+        Dictionary mapping dimension names to desired
+        aspect ratio of total number of chunks along each dimension. Dimensions present
+        in the dataset but not in target_chunks_aspect_ratio will be filled with
+        default_ratio. If allow_extra_dims is true, target_chunks_aspect_ratio can contain
+        dimensions not present in the dataset, which will be removed in the ouput.
+        A value of -1 can be passed to entirely prevent chunking along that dimension.
+    size_tolerance : float
+        Chunksize tolerance. Resulting chunk size will be within
+        [target_chunk_size*(1-size_tolerance),
+        target_chunk_size*(1+size_tolerance)]
+    default_ratio : int, optional
+        Default value to use for dimensions on the dataset not specified in
+        target_chunks_aspect_ratio, by default -1, meaning that the ommited dimension will
+        not be chunked.
+    allow_extra_dims : bool, optional
+        Allow to pass dimensions not present in the dataset to be passed in
+        target_chunks_aspect_ratio, by default False
+
+    Returns
+    -------
+    dict[str, int]
+        Target chunk dictionary. Can be passed directly to `ds.chunk()`
+
+    """
+
+
+    logger.info("Running dynamic chunking algorithm using even divisors")
 
     # filter out the dimensions that are unchunked
     target_chunks_aspect_ratio_chunked_only = {
@@ -138,14 +226,62 @@ def even_divisor_algo(
     # Return the chunk combination with the closest fit
     return combinations_sorted[0]
 
-
+@check_inputs
 def iterative_ratio_increase_algo(
     ds: xr.Dataset,
     target_chunk_size: int,
     target_chunks_aspect_ratio: Dict[str, int],
     size_tolerance: float,
 ) -> Dict[str, int]:
-    logger.info("Running secondary dynamic chunking")
+    """
+    Alternative algorithm that starts with a normalized chunk aspect ratio and iteratively scales
+    it until the desired chunk size is reached.
+
+    Steps
+    Deduce the maximum chunksize that would adhere to the given aspect ratio by
+    dividing the dimension length by the aspect ratio
+
+    Then iteratively divide this chunksize by a scaling factor until the
+    resulting chunksize is below the largest size within tolerance
+
+    Test for the resulting chunk size. If the size is within the tolerance, return the chunk size.
+    If the size is below the tolerance, raise an error. In this case we need some more
+    sophisicated logic or increase the tolerance.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Input dataset
+    target_chunk_size : Union[int, str]
+        Desired single chunks size. Can be provided as
+        integer (bytes) or as a str like '100MB' etc.
+    target_chunks_aspect_ratio: Dict[str, int]
+        Dictionary mapping dimension names to desired
+        aspect ratio of total number of chunks along each dimension. Dimensions present
+        in the dataset but not in target_chunks_aspect_ratio will be filled with
+        default_ratio. If allow_extra_dims is true, target_chunks_aspect_ratio can contain
+        dimensions not present in the dataset, which will be removed in the ouput.
+        A value of -1 can be passed to entirely prevent chunking along that dimension.
+    size_tolerance : float
+        Chunksize tolerance. Resulting chunk size will be within
+        [target_chunk_size*(1-size_tolerance),
+        target_chunk_size*(1+size_tolerance)]
+    default_ratio : int, optional
+        Default value to use for dimensions on the dataset not specified in
+        target_chunks_aspect_ratio, by default -1, meaning that the ommited dimension will
+        not be chunked.
+    allow_extra_dims : bool, optional
+        Allow to pass dimensions not present in the dataset to be passed in
+        target_chunks_aspect_ratio, by default False
+
+    Returns
+    -------
+    dict[str, int]
+        Target chunk dictionary. Can be passed directly to `ds.chunk()`
+
+    """
+
+    logger.info("Running dynamic chunking algorithm iteratively increasing fixed ratio chunks")
     # Alternative algorithm that starts with a normalized chunk aspect ratio and iteratively scales
     # it until the desired chunk size is reached.
 
@@ -223,117 +359,3 @@ def iterative_ratio_increase_algo(
             )
         )
     return optimal_target_chunks
-
-
-def dynamic_target_chunks_from_dataset(
-    ds: xr.Dataset,
-    target_chunk_size: Union[int, str],
-    target_chunks_aspect_ratio: Dict[str, int],
-    size_tolerance: float,
-    default_ratio: int = -1,
-    allow_extra_dims: bool = False,
-    allow_fallback_algo: bool = False,
-) -> dict[str, int]:
-    """Determine chunksizes based on desired chunk size and the ratio of total chunks
-    along each dimension of the dataset. The algorithm finds even divisors, and chooses
-    possible combinations that produce chunk sizes close to the target. From this set
-    of combinations the chunks that most closely resemble the aspect ratio of total
-    chunks along the given dimensions is returned.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Input dataset
-    target_chunk_size : Union[int, str]
-        Desired single chunks size. Can be provided as
-        integer (bytes) or as a str like '100MB' etc.
-    target_chunks_aspect_ratio: Dict[str, int]
-        Dictionary mapping dimension names to desired
-        aspect ratio of total number of chunks along each dimension. Dimensions present
-        in the dataset but not in target_chunks_aspect_ratio will be filled with
-        default_ratio. If allow_extra_dims is true, target_chunks_aspect_ratio can contain
-        dimensions not present in the dataset, which will be removed in the ouput.
-        A value of -1 can be passed to entirely prevent chunking along that dimension.
-    size_tolerance : float
-        Chunksize tolerance. Resulting chunk size will be within
-        [target_chunk_size*(1-size_tolerance),
-        target_chunk_size*(1+size_tolerance)]
-    default_ratio : int, optional
-        Default value to use for dimensions on the dataset not specified in
-        target_chunks_aspect_ratio, by default -1, meaning that the ommited dimension will
-        not be chunked.
-    allow_extra_dims : bool, optional
-        Allow to pass dimensions not present in the dataset to be passed in
-        target_chunks_aspect_ratio, by default False
-    allow_fallback_algo : bool, optional
-        If True, allows the use of secondary algorithm if finding chunking scheme with
-        even divisors fails.
-
-    Returns
-    -------
-    dict[str, int]
-        Target chunk dictionary. Can be passed directly to `ds.chunk()`
-
-    """
-    target_chunk_size = _maybe_parse_bytes(target_chunk_size)
-
-    missing_dims = set(ds.dims) - set(target_chunks_aspect_ratio.keys())
-    extra_dims = set(target_chunks_aspect_ratio.keys()) - set(ds.dims)
-
-    if not allow_extra_dims and len(extra_dims) > 0:
-        raise ValueError(
-            f"target_chunks_aspect_ratio contains dimensions not present in dataset. "
-            f"Got {list(extra_dims)} but expected {list(ds.dims.keys())}. You can pass "
-            "additional dimensions by setting allow_extra_dims=True"
-        )
-    elif allow_extra_dims and len(extra_dims) > 0:
-        # trim extra dimension out of target_chunks_aspect_ratio
-        warnings.warn(f"Trimming dimensions {list(extra_dims)} from target_chunks_aspect_ratio")
-        target_chunks_aspect_ratio = {
-            dim: v for dim, v in target_chunks_aspect_ratio.items() if dim in ds.dims
-        }
-
-    if len(missing_dims) > 0:
-        # set default ratio for missing dimensions
-        warnings.warn(
-            f"dimensions {list(missing_dims)} are not specified in target_chunks_aspect_ratio."
-            f"Setting default value of {default_ratio} for these dimensions."
-        )
-        target_chunks_aspect_ratio.update({dim: default_ratio for dim in missing_dims})
-
-    # check values in target_chunks_aspect_ratio
-    for dim, ratio in target_chunks_aspect_ratio.items():
-        if not (ratio >= 1 or ratio == -1):
-            raise ValueError(
-                f"Ratio value can only be larger than 0 or -1. Got {ratio} for dimension {dim}"
-            )
-        if not isinstance(ratio, int):
-            raise ValueError(f"Ratio value must be an integer. Got {ratio} for dimension {dim}")
-    try:
-        target_chunks = even_divisor_algo(
-            ds,
-            target_chunk_size,
-            target_chunks_aspect_ratio,
-            size_tolerance,
-        )
-    except ValueError as e:
-        if allow_fallback_algo:
-            warnings.warn(
-                "Primary algorithm using even divisors along each dimension failed "
-                f"with {e}. Trying secondary algorithm."
-            )
-            target_chunks = iterative_ratio_increase_algo(
-                ds,
-                target_chunk_size,
-                target_chunks_aspect_ratio,
-                size_tolerance,
-            )
-        else:
-            raise ValueError(
-                (
-                    "Could not find any chunk combinations satisfying "
-                    "the size constraint. Consider increasing size_tolerance"
-                    " or enabling allow_fallback_algo."
-                )
-            )
-    return target_chunks
