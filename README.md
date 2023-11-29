@@ -3,7 +3,7 @@
 Determine appropriate chunk sizes for a given xarray dataset based on target chunk size and 'chunk aspect ratio'
 
 The chunk aspect ratio describes the amount of chunks along a given dimension. Take a dataset with two dimensions (`a` and `b`). A chunk aspect ratio `{'a':2, 'b':1}` means that the number of total chunks along `b` is twice that of `b`.
-This concept was inspired by a discussion with [Rich Signell](https://github.com/rsignell-usgs) at Scipy '23. The idea is that one might want to optimize the chunking of a dataset to make e.g. an operation along time n times slower than an operation along spatial dimensions.
+This concept was inspired by a discussion with [Rich Signell](https://github.com/rsignell-usgs) and a follow up sprint with  [@amsnyder](https://github.com/amsnyder),[@thodson-usgs](https://github.com/thodson-usgs),  [@alaws-USGS](https://github.com/alaws-USGS), [@kjdoore](https://github.com/kjdoore) at Scipy '23. The idea is that one might want to optimize the chunking of a dataset to make e.g. an operation along time n times slower than an operation along spatial dimensions.
 
 
 ## Usage
