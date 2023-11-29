@@ -46,7 +46,7 @@ Nice this gave us ~800KB chunks.
 Lets chunk along all dimensions of the dataset and aim to have the same number of chunks along each dimension:
 ```
 chunks = even_divisor_algo(ds, '100KiB', {'x':1, 'y':1, 'time':1}, 0.3)
-ds
+ds.chunk(chunks)
 ```
 <img width="648" alt="image" src="https://github.com/jbusecke/dynamic_chunks/assets/14314623/eb866582-f41b-4984-b88f-1091b007ee26">
 
