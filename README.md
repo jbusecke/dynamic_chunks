@@ -6,7 +6,7 @@ The chunk aspect ratio describes the amount of chunks along a given dimension. T
 This concept was inspired by a discussion with [Rich Signell](https://github.com/rsignell-usgs) at Scipy '23. The idea is that one might want to optimize the chunking of a dataset to make e.g. an operation along time n times slower than an operation along spatial dimensions.
 
 
-## Useage
+## Usage
 `dynamic_chunks` implements several algorithms with the input signature
 
 ```python
