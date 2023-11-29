@@ -44,7 +44,7 @@ Nice this gave us ~800KB chunks.
 
 ### Chunk along multiple dimensions
 Lets chunk along all dimensions of the dataset and aim to have the same number of chunks along each dimension:
-```
+```python
 chunks = even_divisor_algo(ds, '100KiB', {'x':1, 'y':1, 'time':1}, 0.3)
 ds.chunk(chunks)
 ```
