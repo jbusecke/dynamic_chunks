@@ -157,7 +157,7 @@ def even_divisor_algo(
     print(f"{unchunked_dims=}")
 
     possible_chunks = []
-    for dim, s in ds.dims.items():
+    for dim, s in ds.sizes.items():
         if dim in unchunked_dims:
             # Always keep this dimension unchunked
             possible_chunks.append([s])
@@ -206,7 +206,7 @@ def even_divisor_algo(
         target_chunks_aspect_ratio_chunked_only.keys()
     )  # the order of these does matter
 
-    shape_chunked_only = np.array([ds.dims[dim] for dim in dims_chunked_only])
+    shape_chunked_only = np.array([ds.sizes[dim] for dim in dims_chunked_only])
     ratio = [
         shape_chunked_only / np.array([c[dim] for dim in dims_chunked_only])
         for c in combinations_filtered_chunked_only
@@ -312,7 +312,7 @@ def iterative_ratio_increase_algo(
 
     def scale_and_normalize_chunks(ds, target_chunks_aspect_ratio, scale_factor):
         scaled_normalized_chunks = {
-            dim: maybe_scale_chunk(ratio, scale_factor, ds.dims[dim])
+            dim: maybe_scale_chunk(ratio, scale_factor, ds.sizes[dim])
             for dim, ratio in target_chunks_aspect_ratio.items()
         }
         return scaled_normalized_chunks
