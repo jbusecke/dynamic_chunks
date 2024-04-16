@@ -1,4 +1,4 @@
-ame: Release Python Package
+name: Release Python Package
 on:
   push:
     branches:
